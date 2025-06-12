@@ -10,8 +10,10 @@ from datetime import datetime, timezone
 
 from data_structures import MetadataStore, FileInfo
 from video_metadata import VideoMetadata
-from duplicate_detector import ResolutionVariant, VideoRelationship, ValidationResult
-from report import ReportGenerator, DuplicateAnalysis
+from report import (
+    ReportGenerator, DuplicateAnalysis, ResolutionVariant, 
+    VideoRelationship, ValidationResult
+)
 
 class TestReport(unittest.TestCase):
     def setUp(self):
@@ -175,6 +177,8 @@ class TestReport(unittest.TestCase):
         
         # Check scale ratios (1080p -> 720p -> 480p)
         scale_ratios = chain_analysis['scale_ratios']
+        print(f"\nScale ratios: {scale_ratios}")
+        
         self.assertIn(0.67, scale_ratios)  # 1080p -> 720p
         self.assertIn(0.44, scale_ratios)  # 720p -> 480p
         
@@ -191,7 +195,25 @@ class TestReport(unittest.TestCase):
             created_at=self.resized_time,
             confidence_score=0.7
         )
-        
+         # Add metadata for unusual variant
+        self.store.add_file(FileInfo(
+            path=unusual_variant.path,
+            file_size=5000000,
+            created_at=self.resized_time,
+            modified_at=self.resized_time,
+            video_metadata=VideoMetadata(
+                duration=30.5,
+                width=1280,
+                height=960,
+                codec="h264",
+                bitrate=2000000,
+                fps=30.0,
+                audio_codec="aac",
+                audio_sample_rate=44100,
+                file_size=5000000
+            )
+        ))
+
         relationship = VideoRelationship(
             original=self.original,
             variants=[unusual_variant],
@@ -199,7 +221,7 @@ class TestReport(unittest.TestCase):
             total_confidence=0.7,
             validation_results={}
         )
-        
+
         generator = ReportGenerator(
             relationships=[relationship],
             base_dir=self.base_path,
@@ -247,6 +269,76 @@ class TestReport(unittest.TestCase):
         self.assertIn("original/video.mp4", report)
         self.assertIn("resized/720p.mp4", report)
         self.assertIn("resized/480p.mp4", report)
+
+    def test_rotated_variant_detection(self):
+        """Test detection and reporting of rotated video variants"""
+        # Create rotated variant (1080x1920 instead of 1920x1080)
+        rotated_variant = ResolutionVariant(
+            path=self.base_path / 'resized' / 'rotated.mp4',
+            width=1080,
+            height=1920,  # Swapped dimensions
+            created_at=self.resized_time,
+            confidence_score=0.95
+        )
+
+        # Add metadata for rotated variant
+        rotated_meta = VideoMetadata(
+            duration=30.5,
+            width=1080,
+            height=1920,  # Swapped dimensions
+            codec="h264",
+            bitrate=5000000,
+            fps=30.0,
+            audio_codec="aac",
+            audio_sample_rate=44100,
+            file_size=10000000
+        )
+
+        # Add to metadata store
+        self.store.add_file(FileInfo(
+            path=rotated_variant.path,
+            file_size=10000000,
+            created_at=self.resized_time,
+            modified_at=self.resized_time,
+            video_metadata=rotated_meta
+        ))
+
+        # Create relationship with rotated variant
+        relationship = VideoRelationship(
+            original=self.original,
+            variants=[rotated_variant],
+            filename='video.mp4',
+            total_confidence=0.95,
+            validation_results={},
+            rotated_variants={rotated_variant.path}  # Mark as rotated
+        )
+
+        generator = ReportGenerator(
+            relationships=[relationship],
+            base_dir=self.base_path,
+            metadata_store=self.store
+        )
+
+        # Analyze relationship
+        analyses = generator.analyze_relationships()
+        self.assertEqual(len(analyses), 1)
+        analysis = analyses[0]
+
+        # Verify original details
+        self.assertEqual(analysis.original_path, self.original_path)
+        self.assertEqual(analysis.original_resolution, "1920x1080")
+
+        # Check duplicate's details
+        self.assertEqual(len(analysis.duplicates), 1)
+        rotated_dup = analysis.duplicates[0]
+        self.assertEqual(rotated_dup['path'], rotated_variant.path)
+        self.assertEqual(rotated_dup['resolution'], "1080x1920")
+        self.assertIn("Rotated variant", rotated_dup['issues'])
+
+        # Generate and verify report
+        report = generator.generate_text_report()
+        self.assertIn("Rotated variant", report)
+        self.assertIn("1080x1920", report)
 
 if __name__ == '__main__':
     unittest.main()

@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from collections import defaultdict
+import math
 
 from src.video_metadata import VideoMetadata
 from src.data_structures import FileInfo, MetadataStore
@@ -300,23 +301,30 @@ class ReportGenerator:
         # Sort resolutions by total pixels (descending)
         resolutions.sort(key=lambda x: x[0] * x[1], reverse=True)
 
-        # Calculate scale ratios between consecutive resolutions
+        # Calculate scale ratios between all resolution pairs
         scale_ratios = set()
         is_consistent = True
 
-        for i in range(len(resolutions) - 1):
-            curr_res = resolutions[i]
-            next_res = resolutions[i + 1]
+        # Check all possible resolution pairs
+        for i in range(len(resolutions)):
+            for j in range(i + 1, len(resolutions)):
+                curr_res = resolutions[i]
+                next_res = resolutions[j]
 
-            # Calculate width and height ratios
-            width_ratio = next_res[0] / curr_res[0]
-            height_ratio = next_res[1] / curr_res[1]
+                # Calculate width and height ratios
+                width_ratio = next_res[0] / curr_res[0]
+                height_ratio = next_res[1] / curr_res[1]
 
-            # Check for consistent scaling and reasonable ratios
-            if not (0.1 <= width_ratio <= 1.0 and abs(width_ratio - height_ratio) < 0.01):
-                is_consistent = False
-            else:
-                scale_ratios.add(round(width_ratio, 2))
+                print(f"Raw ratios - width: {width_ratio:.4f}, height: {height_ratio:.4f}")
+
+                # Check for consistent scaling and reasonable ratios
+                if not (0.1 <= width_ratio <= 1.0 and abs(width_ratio - height_ratio) < 0.01):
+                    is_consistent = False
+                else:
+                    # Use width ratio since common video resolutions are based on width
+                    ratio = round(width_ratio, 2)
+                    scale_ratios.add(ratio)
+                    print(f"Added scale ratio {ratio} for {curr_res} -> {next_res}")
 
         # Common scale ratios (e.g., 1080p->720p->480p)
         common_ratios = {0.67, 0.44}  # Approximations of standard scaling
