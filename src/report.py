@@ -1,18 +1,123 @@
 """
-Reporting module for generating file inventory and duplicate analysis reports.
-"""
+Duplicate Detection Engine Module.
 
-from dataclasses import dataclass
-from typing import Dict, List, Any
-from data_structures import MetadataStore, FileInfo
-from duplicate_detector import DuplicateGroup, VideoRelationship, ResolutionVariant
+This module provides functionality to identify and validate duplicate video files
+based on their metadata and characteristics.
+"""
+from typing import Dict, List, Set, Tuple, Optional, NamedTuple, Any
 from pathlib import Path
-import humanize
-from statistics import mean
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from collections import defaultdict
+
+from src.video_metadata import VideoMetadata
+from src.data_structures import FileInfo, MetadataStore
+
+# Constants
+ASPECT_RATIO_TOLERANCE = 0.01  # 1% tolerance for aspect ratio differences
+
+class EdgeCaseType(Enum):
+    """Types of edge cases that can be detected"""
+    DURATION_MISMATCH = "duration_mismatch"
+    ASPECT_RATIO = "aspect_ratio"
+    RESOLUTION = "resolution"
+    QUALITY = "quality"
+    TIMESTAMP = "timestamp"
+    METADATA = "metadata"
+
+class Severity(Enum):
+    """Severity levels for issues"""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+class Action(Enum):
+    """Possible actions for duplicate files"""
+    SAFE_DELETE = "safe_delete"
+    MANUAL_REVIEW = "manual_review"
+    PRESERVE = "preserve"
+    VERIFY = "verify"
+
+@dataclass(frozen=True)
+class ResolutionVariant:
+    """Represents a video file at a specific resolution"""
+    path: Path
+    width: int
+    height: int
+    created_at: datetime
+    confidence_score: float
+
+@dataclass
+class VideoRelationship:
+    """Represents relationships between original and resized video variants"""
+    original: ResolutionVariant
+    variants: List[ResolutionVariant]
+    filename: str
+    total_confidence: float
+    validation_results: Dict[Path, 'ValidationResult']
+    rotated_variants: Set[Path] = field(default_factory=set)  # Set of paths to rotated variants
+
+    @property
+    def all_paths(self) -> List[Path]:
+        """Returns all paths in the relationship"""
+        return [self.original.path] + [v.path for v in self.variants]
+
+    @property
+    def resolution_chain(self) -> List[Tuple[int, int]]:
+        """Returns all resolutions in descending order"""
+        all_variants = [self.original] + self.variants
+        return sorted(
+            [(v.width, v.height) for v in all_variants],
+            key=lambda x: x[0] * x[1],
+            reverse=True
+        )
+
+@dataclass
+class ValidationResult:
+    """Results of duplicate validation checks"""
+    aspect_ratio_match: bool
+    timestamp_valid: bool
+    size_correlation_valid: bool
+    bitrate_valid: bool
+    overall_score: float
+    reason: str
+    is_rotated: bool = False  # Add rotation flag
+
+@dataclass
+class DuplicateGroup:
+    """Represents a group of potentially duplicate video files"""
+    filename: str  # Base filename without directory
+    original: Optional[Path]  # Path to the suspected original file
+    duplicates: List[Path]  # Paths to suspected duplicates
+    confidence_score: float  # 0-1 score indicating confidence in duplicate relationship
+    validation_results: Dict[Path, ValidationResult] = field(default_factory=dict)
+
+    @property
+    def all_files(self) -> List[Path]:
+        """Returns all files in the group including the original"""
+        return [self.original] + self.duplicates if self.original else self.duplicates
+
+@dataclass
+class EdgeCaseAnalysis:
+    """Analysis of potential edge cases and problematic files"""
+    file_path: Path
+    issue_type: EdgeCaseType
+    severity: Severity
+    details: str
+    recommendation: str
+
+@dataclass
+class ActionRecommendation:
+    """Recommended action for a duplicate file"""
+    file_path: Path
+    action: Action
+    reason: str
+    confidence: float  # 0-1 score
 
 @dataclass
 class DuplicateAnalysis:
-    """Detailed analysis of a duplicate group"""
+    """Analysis report for duplicate video files"""
     original_path: Path
     original_resolution: str
     duplicates: List[Dict[str, Any]]  # List of {path, resolution, size, confidence, issues}
@@ -24,11 +129,10 @@ class DuplicateAnalysis:
 
 class ReportGenerator:
     """Generates detailed analysis reports for duplicate video files"""
-    
+
     def __init__(self, relationships: List[VideoRelationship], base_dir: Path, metadata_store: MetadataStore):
-        """
-        Initialize the report generator.
-        
+        """Initialize the report generator.
+
         Args:
             relationships: List of VideoRelationship objects to analyze
             base_dir: Base directory for relative path calculations
@@ -37,58 +141,59 @@ class ReportGenerator:
         self.relationships = relationships
         self.base_dir = base_dir
         self.metadata_store = metadata_store
-        
+
     def _get_relative_path(self, path: Path) -> str:
-        """Get path relative to base directory for cleaner output"""
+        """Convert path relative to base directory for cleaner output.
+        
+        If the path is not under the base directory, returns the absolute path.
+        """
         try:
             return str(path.relative_to(self.base_dir))
         except ValueError:
+            # If path is not under base_dir, return the absolute path
             return str(path)
 
     def analyze_relationships(self) -> List[DuplicateAnalysis]:
-        """
-        Analyze each relationship group and generate detailed statistics.
-        
-        Returns:
-            List of DuplicateAnalysis objects
-        """
+        """Analyze relationships and generate detailed reports."""
         analyses = []
+
         for rel in self.relationships:
             # Get original file info
             original = rel.original
+            orig_info = self.metadata_store.files[str(original.path)]
             original_resolution = f"{original.width}x{original.height}"
-            
+
             # Analyze variants
             duplicates = []
             total_size = 0
             issues = []
-            
+
             # Add original file size to total if available
-            orig_info = self.metadata_store.files.get(str(original.path))
-            if orig_info:
-                total_size += orig_info.file_size
-            
+            total_size += orig_info.file_size if orig_info else 0
+
             # Validate resolution chain
             chain_analysis = self._validate_resolution_chain(rel)
             resolution_chain_valid = chain_analysis['is_consistent']
-            
-            # Check for common resolution chain issues
+
+            # Add chain validation issues
             if not chain_analysis['is_consistent']:
                 issues.append("Inconsistent resolution scaling")
-            elif chain_analysis['missing_common_ratios']:
+            if chain_analysis['missing_common_ratios']:
                 issues.append(
                     f"Missing common resolutions: {', '.join(str(r) for r in chain_analysis['missing_common_ratios'])}"
                 )
-            
+
             # Process each variant
             for variant in rel.variants:
-                variant_issues = self._collect_group_issues(chain_analysis, rel)
+                variant_issues = []
+                meta_info = self.metadata_store.files[str(variant.path)]
                 resolution = f"{variant.width}x{variant.height}"
-                
-                # Get file size from metadata store
-                file_info = self.metadata_store.files.get(str(variant.path))
-                variant_size = file_info.file_size if file_info else 0
-                
+                variant_size = meta_info.file_size if meta_info else 0
+
+                # Check for rotation
+                if variant.path in rel.rotated_variants:
+                    variant_issues.append("Rotated variant")
+
                 duplicates.append({
                     'path': variant.path,
                     'resolution': resolution,
@@ -96,12 +201,12 @@ class ReportGenerator:
                     'confidence': variant.confidence_score,
                     'issues': variant_issues
                 })
-                
+
                 total_size += variant_size
-            
+
             # Calculate potential space savings (size of all duplicates)
             potential_savings = total_size - (orig_info.file_size if orig_info else 0)
-            
+
             analyses.append(DuplicateAnalysis(
                 original_path=original.path,
                 original_resolution=original_resolution,
@@ -112,38 +217,111 @@ class ReportGenerator:
                 resolution_chain_valid=resolution_chain_valid,
                 issues=issues
             ))
-        
+
         return sorted(analyses, key=lambda x: x.confidence_score, reverse=True)
 
-    def _validate_resolution_chain(self, rel: VideoRelationship) -> Dict[str, Any]:
-        """Validate the resolution chain in a relationship"""
-        resolutions = [(rel.original.width, rel.original.height)]
-        for v in rel.variants:
-            resolutions.append((v.width, v.height))
+    def generate_text_report(self) -> str:
+        """Generate a human-readable text report of the analysis.
+
+        Returns:
+            Formatted text string containing the analysis report
+        """
+        analyses = self.analyze_relationships()
+
+        # Calculate overall statistics
+        total_groups = len(analyses)
+        total_duplicates = sum(len(a.duplicates) for a in analyses)
+        total_size = sum(a.total_size for a in analyses)
+        total_savings = sum(a.potential_savings for a in analyses)
+
+        # Build report
+        lines = []
+
+        # Overall summary
+        lines.extend([
+            "=== Video Duplicate Analysis Report ===\n",
+            "Overall Statistics:",
+            f"- Total duplicate groups: {total_groups}",
+            f"- Total duplicate files: {total_duplicates}",
+            f"- Total size: {self._humanize_size(total_size)}",
+            f"- Potential space savings: {self._humanize_size(total_savings)}",
+            ""
+        ])
+
+        # Details for each duplicate group
+        if analyses:
+            lines.append("Duplicate Groups (sorted by confidence):\n")
+
+            for i, analysis in enumerate(analyses, 1):
+                lines.extend([
+                    f"Group {i}:",
+                    f"Original: {self._get_relative_path(analysis.original_path)}",
+                    f"Resolution: {analysis.original_resolution}",
+                    f"Confidence Score: {analysis.confidence_score:.2f}",
+                    "Duplicates:"
+                ])
+
+                for dup in analysis.duplicates:
+                    lines.extend([
+                        f"  - Path: {self._get_relative_path(dup['path'])}",
+                        f"    Resolution: {dup['resolution']}",
+                        f"    Size: {self._humanize_size(dup['size'])}",
+                        f"    Confidence: {dup['confidence']:.2f}"
+                    ])
+                    if dup['issues']:
+                        lines.append(f"    Issues: {', '.join(dup['issues'])}")
+                lines.append("")
+
+                if analysis.issues:
+                    lines.append("Group Issues:")
+                    lines.extend([f"  - {issue}" for issue in analysis.issues])
+                    lines.append("")
+
+        else:
+            lines.append("No duplicates found.")
+
+        return "\n".join(lines)
+
+    def _validate_resolution_chain(self, relationship: VideoRelationship) -> Dict[str, Any]:
+        """Analyze resolution chain for consistency and missing common ratios.
+
+        Args:
+            relationship: The VideoRelationship to analyze
+
+        Returns:
+            Dictionary containing analysis results
+        """
+        resolutions = []
+        resolutions.append((relationship.original.width, relationship.original.height))
+
+        for variant in relationship.variants:
+            resolutions.append((variant.width, variant.height))
+
+        # Sort resolutions by total pixels (descending)
         resolutions.sort(key=lambda x: x[0] * x[1], reverse=True)
-        
-        is_consistent = True
+
+        # Calculate scale ratios between consecutive resolutions
         scale_ratios = set()
-        
-        # Check all resolution pairs for ratios
-        for i in range(len(resolutions)):
-            for j in range(i + 1, len(resolutions)):
-                curr_res = resolutions[i]
-                next_res = resolutions[j]
-                
-                width_ratio = next_res[0] / curr_res[0]
-                height_ratio = next_res[1] / curr_res[1]
-                
-                # Check for consistent scaling and reasonable ratios
-                if not (0.1 <= width_ratio <= 1.0 and abs(width_ratio - height_ratio) < 0.01):
-                    is_consistent = False
-                
+        is_consistent = True
+
+        for i in range(len(resolutions) - 1):
+            curr_res = resolutions[i]
+            next_res = resolutions[i + 1]
+
+            # Calculate width and height ratios
+            width_ratio = next_res[0] / curr_res[0]
+            height_ratio = next_res[1] / curr_res[1]
+
+            # Check for consistent scaling and reasonable ratios
+            if not (0.1 <= width_ratio <= 1.0 and abs(width_ratio - height_ratio) < 0.01):
+                is_consistent = False
+            else:
                 scale_ratios.add(round(width_ratio, 2))
-        
+
         # Common scale ratios (e.g., 1080p->720p->480p)
-        common_ratios = {0.67, 0.44}  # 1080p->720p (0.67), 720p->480p (0.44)
+        common_ratios = {0.67, 0.44}  # Approximations of standard scaling
         missing_ratios = common_ratios - scale_ratios
-        
+
         return {
             'is_consistent': is_consistent,
             'scale_ratios': sorted(scale_ratios),
@@ -151,82 +329,12 @@ class ReportGenerator:
             'resolution_count': len(resolutions)
         }
 
-    def _collect_group_issues(self, chain_analysis: Dict[str, Any], rel: VideoRelationship) -> List[str]:
-        """Collect any issues with a duplicate group"""
-        issues = []
-        
-        # Resolution chain issues
-        if not chain_analysis['is_consistent']:
-            issues.append("Inconsistent resolution scaling")
-        
-        # Low confidence score
-        if rel.total_confidence < 0.7:
-            issues.append("Low confidence match")
-        
-        return issues
-
-    def generate_text_report(self) -> str:
-        """
-        Generate a detailed text report of duplicate analysis.
-        
-        Returns:
-            Formatted string containing the analysis report
-        """
-        analyses = self.analyze_relationships()
-        
-        if not analyses:
-            return "No duplicates found."
-        
-        # Calculate overall statistics
-        total_groups = len(analyses)
-        total_duplicates = sum(len(a.duplicates) for a in analyses)
-        total_size = sum(a.total_size for a in analyses)
-        total_savings = sum(a.potential_savings for a in analyses)
-        
-        # Build report
-        lines = ["=== Video Duplicate Analysis Report ===\n"]
-        
-        # Overall summary
-        lines.extend([
-            "Overall Statistics:",
-            f"- Total duplicate groups: {total_groups}",
-            f"- Total duplicate files: {total_duplicates}",
-            f"- Total size of duplicates: {humanize.naturalsize(total_size)}",
-            f"- Potential space savings: {humanize.naturalsize(total_savings)}",
-            ""
-        ])
-        
-        # Detailed group analysis
-        lines.append("Duplicate Groups (sorted by confidence):\n")
-        
-        for i, analysis in enumerate(analyses, 1):
-            lines.extend([
-                f"Group {i}:",
-                f"Original: {self._get_relative_path(analysis.original_path)}",
-                f"Resolution: {analysis.original_resolution}",
-                f"Confidence Score: {analysis.confidence_score:.2f}",
-                "Duplicates:"
-            ])
-            
-            for dup in analysis.duplicates:
-                dup_lines = [
-                    f"- {self._get_relative_path(dup['path'])}",
-                    f"  Resolution: {dup['resolution']}",
-                    f"  Size: {humanize.naturalsize(dup['size'])}",
-                    f"  Confidence: {dup['confidence']:.2f}"
-                ]
-                
-                if dup['issues']:
-                    dup_lines.append(f"  Issues: {', '.join(dup['issues'])}")
-                
-                lines.extend(dup_lines)
-            
-            if analysis.issues:
-                lines.extend([
-                    "Group Issues:",
-                    *[f"- {issue}" for issue in analysis.issues]
-                ])
-            
-            lines.append("")  # Empty line between groups
-        
-        return "\n".join(lines)
+    @staticmethod
+    def _humanize_size(size_in_bytes: float) -> str:
+        """Convert bytes to human readable string."""
+        size = float(size_in_bytes)
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size < 1024:
+                return f"{size:.1f} {unit}"
+            size /= 1024
+        return f"{size:.1f} PB"

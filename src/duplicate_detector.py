@@ -78,6 +78,7 @@ class ValidationResult:
     bitrate_valid: bool
     overall_score: float
     reason: str
+    is_rotated: bool = False  # Add rotation flag
 
 @dataclass
 class DuplicateGroup:
@@ -690,3 +691,19 @@ class DuplicateDetector:
                 ))
         
         return recommendations
+
+    def _validate_resolution_chain(self, original_metadata, variants):
+        """Validate resolution chain, including rotation cases."""
+        issues = []
+        for variant in variants:
+            aspect_ratio_original = original_metadata.width / original_metadata.height
+            aspect_ratio_variant = variant.width / variant.height
+
+            # Check for rotation (aspect ratio swapped)
+            if abs(aspect_ratio_original - (1 / aspect_ratio_variant)) < self.ASPECT_RATIO_TOLERANCE:
+                issues.append(f"Rotation detected: {variant.path} (rotated resolution)")
+                confidence_score += 0.2  # Boost confidence for rotation cases
+            elif abs(aspect_ratio_original - aspect_ratio_variant) > self.ASPECT_RATIO_TOLERANCE:
+                issues.append(f"Aspect ratio mismatch: {variant.path}")
+
+        return issues
