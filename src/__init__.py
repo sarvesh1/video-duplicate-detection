@@ -1,0 +1,3 @@
+"""
+Video duplicate detection package
+"""
