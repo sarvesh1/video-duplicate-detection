@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Set, Optional
 from collections import defaultdict
-from .video_metadata import VideoMetadata
+from src.video_metadata import VideoMetadata
 
 @dataclass
 class FileInfo:

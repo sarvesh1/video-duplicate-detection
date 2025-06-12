@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional
 from dataclasses import dataclass
-from .video_metadata import VideoMetadata, VideoMetadataParser
+from video_metadata import VideoMetadata, VideoMetadataParser
 
 @dataclass
 class FileMetadata:
