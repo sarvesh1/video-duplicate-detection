@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import Dict, List, Set, Optional
 from collections import defaultdict
 from src.video_metadata import VideoMetadata
+import sys
+
+# Adjust the path for module imports
+sys.path.append(str(Path(__file__).resolve().parent))
 
 @dataclass
 class FileInfo:
