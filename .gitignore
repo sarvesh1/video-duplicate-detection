@@ -1,5 +1,9 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
+*/__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
 *.py[cod]
 *$py.class
 
@@ -199,4 +203,3 @@ test_data/backup/PXL_20230724_104955429_2.mp4
 test_data/resized/PXL_20230724_104955429_2.mp4
 test_data/backup/PXL_20230724_104955429_2.mp4:Zone.Identifier
 test_data/original/PXL_20230724_104955429_2.mp4
-src/__pycache__/
