@@ -253,18 +253,23 @@ class TestReport(unittest.TestCase):
         self.assertIn("=== Video Duplicate Analysis Report ===", report)
         self.assertIn("Total duplicate groups: 1", report)
         self.assertIn("Total duplicate files: 2", report)
-        self.assertIn("Resolution: 1920x1080", report)
-        self.assertIn("Resolution: 1280x720", report)
-        self.assertIn("Resolution: 854x480", report)
-        self.assertIn("Size:", report)
-        self.assertIn("Confidence Score:", report)
         
-        # Check formatting
-        self.assertIn("Group 1:", report)
-        self.assertIn("Original:", report)
-        self.assertIn("Duplicates:", report)
+        # Check that resolutions are included
+        self.assertIn("1920x1080", report)
+        self.assertIn("1280x720", report)
+        self.assertIn("854x480", report)
         
-        # Verify all paths are relative
+        # Check that metadata is included
+        # Our format shows size in MB/GB format
+        self.assertIn(" MB", report)  # Size is shown in MB
+        self.assertIn("→", report)    # Divider between original and duplicates
+        
+        # Check format sections
+        self.assertIn("[1]", report)  # Group number
+        self.assertIn("→", report)    # Arrow separator
+        self.assertIn("|", report)    # Pipe separator
+        
+        # Verify all paths are relative and present
         self.assertNotIn(str(self.base_path), report)
         self.assertIn("original/video.mp4", report)
         self.assertIn("resized/720p.mp4", report)

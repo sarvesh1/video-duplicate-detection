@@ -222,16 +222,22 @@ class DuplicateDetector:
         
         # Score each candidate
         for path, metadata in candidates:
+            file_info = self.file_info_map[path]
             resolution = metadata.width * metadata.height
-            timestamp = self.file_info_map[path].created_at.timestamp()
+            timestamp = file_info.created_at.timestamp()
             
             # Calculate score components
             resolution_score = resolution / max_resolution  # 0-1 score for resolution
             time_score = 1 - ((timestamp - earliest_time) / (86400 * 30))  # Time diff in 30 days
             time_score = max(0, min(1, time_score))  # Clamp between 0-1
             
-            # Weighted score (resolution more important than timestamp)
-            score = (resolution_score * 0.7) + (time_score * 0.3)
+            # Calculate file size score with safe access
+            file_size = file_info.file_size if file_info else 0
+            max_size = max((self.file_info_map[p].file_size for p, _ in candidates), default=1)
+            size_score = file_size / max_size if max_size > 0 else 0
+            
+            # Weighted score (prioritize file size over resolution)
+            score = (size_score * 0.5) + (resolution_score * 0.3) + (time_score * 0.2)
             
             if score > total_score:
                 total_score = score
@@ -418,7 +424,7 @@ class DuplicateDetector:
 
         return sorted(relationships, key=lambda r: r.total_confidence, reverse=True)
 
-    def analyze_resolution_chain(self, relationship: VideoRelationship) -> Dict[str, any]:
+    def analyze_resolution_chain(self, relationship: VideoRelationship) -> Dict[str, Any]:
         """
         Analyze the resolution chain in a relationship for completeness and consistency.
         

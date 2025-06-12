@@ -246,38 +246,42 @@ class ReportGenerator:
             f"- Total duplicate files: {total_duplicates}",
             f"- Total size: {self._humanize_size(total_size)}",
             f"- Potential space savings: {self._humanize_size(total_savings)}",
+            "",
+            "Duplicate Groups (sorted by confidence):",
             ""
         ])
 
         # Details for each duplicate group
         if analyses:
-            lines.append("Duplicate Groups (sorted by confidence):\n")
-
+            lines.extend([
+                "Format: [Group #] Original [Resolution] → Duplicates [Resolution, Size] | Issues",
+                "-" * 120
+            ])
+            
             for i, analysis in enumerate(analyses, 1):
-                lines.extend([
-                    f"Group {i}:",
-                    f"Original: {self._get_relative_path(analysis.original_path)}",
-                    f"Resolution: {analysis.original_resolution}",
-                    f"Confidence Score: {analysis.confidence_score:.2f}",
-                    "Duplicates:"
-                ])
-
+                # Format original file info
+                orig_path = self._get_relative_path(analysis.original_path)
+                
+                # Format duplicate entries
+                dup_entries = []
                 for dup in analysis.duplicates:
-                    lines.extend([
-                        f"  - Path: {self._get_relative_path(dup['path'])}",
-                        f"    Resolution: {dup['resolution']}",
-                        f"    Size: {self._humanize_size(dup['size'])}",
-                        f"    Confidence: {dup['confidence']:.2f}"
-                    ])
+                    dup_path = self._get_relative_path(dup['path'])
+                    dup_info = f"{dup_path} [{dup['resolution']}, {self._humanize_size(dup['size'])}]"
                     if dup['issues']:
-                        lines.append(f"    Issues: {', '.join(dup['issues'])}")
-                lines.append("")
-
+                        dup_info += f" ({', '.join(dup['issues'])})"
+                    dup_entries.append(dup_info)
+                
+                # Build the single-line entry
+                line = f"[{i}] {orig_path} [{analysis.original_resolution}, {self._humanize_size(self.metadata_store.files[str(analysis.original_path)].file_size)}] → {' | '.join(dup_entries)}"
+                
+                # Add group issues if any
                 if analysis.issues:
-                    lines.append("Group Issues:")
-                    lines.extend([f"  - {issue}" for issue in analysis.issues])
-                    lines.append("")
-
+                    line += f" | Issues: {', '.join(analysis.issues)}"
+                
+                lines.extend([
+                    line,
+                    "-" * 120
+                ])
         else:
             lines.append("No duplicates found.")
 
