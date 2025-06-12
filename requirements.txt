@@ -1,0 +1,4 @@
+humanize>=4.7.0
+ffmpeg-python>=0.2.0
+opencv-python>=4.11.0
+numpy>=2.2.6
