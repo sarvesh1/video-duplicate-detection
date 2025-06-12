@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import sys
 import shutil
+import tempfile
 
 # Add the src directory to Python path for imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -19,39 +20,63 @@ class TestVideoMetadata(unittest.TestCase):
         """Set up test data directory and ensure test video exists"""
         cls.base_dir = Path(__file__).parent.parent
         cls.test_data_dir = cls.base_dir / 'test_data'
-        cls.test_video_path = cls.test_data_dir / 'original' / 'video1.mp4'
+        cls.original_dir = cls.test_data_dir / 'original'
+        cls.backup_dir = cls.test_data_dir / 'backup'
         
-        if not cls.test_video_path.exists():
-            raise unittest.SkipTest(f"Test video not found at {cls.test_video_path}")
+        # Create test directories if they don't exist
+        cls.original_dir.mkdir(parents=True, exist_ok=True)
+        cls.backup_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Test video paths
+        cls.test_video_path = cls.original_dir / 'video1.mp4'
+        cls.nonexistent_video = cls.test_data_dir / 'nonexistent.mp4'
+        
+        # Create a corrupted video file for testing
+        cls.corrupted_video = cls.test_data_dir / 'corrupted.mp4'
+        with open(cls.corrupted_video, 'wb') as f:
+            f.write(b'This is not a valid video file')
+    
+    @classmethod
+    def tearDownClass(cls):
+        """Clean up temporary test files"""
+        if cls.corrupted_video.exists():
+            cls.corrupted_video.unlink()
+    
+    def setUp(self):
+        """Verify test environment before each test"""
+        if not self.test_video_path.exists():
+            self.skipTest(f"Test video not found at {self.test_video_path}. Please ensure test data is available.")
     
     def test_video_metadata_extraction(self):
         """Test basic video metadata extraction"""
         metadata = VideoMetadataParser.parse_video(self.test_video_path)
         
-        # Check if metadata was extracted successfully
+        # First verify that we got metadata back
         self.assertIsNotNone(metadata, "Metadata extraction failed")
         self.assertIsInstance(metadata, VideoMetadata)
         
-        # Basic validation
-        self.assertGreater(metadata.duration, 0, "Duration should be greater than 0")
-        self.assertGreater(metadata.width, 0, "Width should be greater than 0")
-        self.assertGreater(metadata.height, 0, "Height should be greater than 0")
-        self.assertGreater(metadata.bitrate, 0, "Bitrate should be greater than 0")
-        self.assertGreater(metadata.fps, 0, "FPS should be greater than 0")
-        
-        # Resolution string format
-        self.assertRegex(
-            metadata.resolution,
-            r'^\d+x\d+$',
-            f"Resolution {metadata.resolution} should be in format WIDTHxHEIGHT"
-        )
-        
-        # Duration formatting
-        self.assertRegex(
-            metadata.duration_formatted,
-            r'^\d+:\d{2}:\d{2}$',
-            f"Duration {metadata.duration_formatted} should be in format HH:MM:SS"
-        )
+        # Only proceed with other checks if we have metadata
+        if metadata:
+            # Basic validation
+            self.assertGreater(metadata.duration, 0, "Duration should be greater than 0")
+            self.assertGreater(metadata.width, 0, "Width should be greater than 0")
+            self.assertGreater(metadata.height, 0, "Height should be greater than 0")
+            self.assertGreater(metadata.bitrate, 0, "Bitrate should be greater than 0")
+            self.assertGreater(metadata.fps, 0, "FPS should be greater than 0")
+            
+            # Resolution string format
+            self.assertRegex(
+                metadata.resolution,
+                r'^\d+x\d+$',
+                f"Resolution {metadata.resolution} should be in format WIDTHxHEIGHT"
+            )
+            
+            # Duration formatting
+            self.assertRegex(
+                metadata.duration_formatted,
+                r'^\d+:\d{2}:\d{2}$',
+                f"Duration {metadata.duration_formatted} should be in format HH:MM:SS"
+            )
     
     def test_metadata_properties(self):
         """Test the property methods of VideoMetadata"""
@@ -95,26 +120,55 @@ class TestVideoMetadata(unittest.TestCase):
     
     def test_invalid_file(self):
         """Test handling of invalid video files"""
-        invalid_path = self.test_data_dir / "nonexistent.mp4"
-        metadata = VideoMetadataParser.parse_video(invalid_path)
-        self.assertIsNone(metadata)
+        metadata = VideoMetadataParser.parse_video(self.nonexistent_video)
+        self.assertIsNone(metadata, "Metadata should be None for nonexistent file")
         
+        # Test with corrupted video file
+        metadata = VideoMetadataParser.parse_video(self.corrupted_video)
+        self.assertIsNone(metadata, "Metadata should be None for corrupted file")
+        
+        # Test with directory path
+        metadata = VideoMetadataParser.parse_video(self.test_data_dir)
+        self.assertIsNone(metadata, "Metadata should be None when path is a directory")
+    
+    def test_empty_video(self):
+        """Test handling of empty video files"""
+        # Create a temporary empty file
+        with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+        
+        try:
+            metadata = VideoMetadataParser.parse_video(tmp_path)
+            self.assertIsNone(metadata, "Metadata should be None for empty file")
+        finally:
+            # Clean up
+            tmp_path.unlink()
+    
     def test_video_comparison(self):
-        """Test comparing metadata of original and backup videos"""
-        original_path = self.test_data_dir / 'original' / 'video2.mp4'
-        backup_path = self.test_data_dir / 'backup' / 'video2.mp4'
+        """Test comparison of metadata between original and backup videos"""
+        # Skip if video2.mp4 doesn't exist in both directories
+        original_path = self.original_dir / 'video2.mp4'
+        backup_path = self.backup_dir / 'video2.mp4'
         
         if not (original_path.exists() and backup_path.exists()):
-            self.skipTest("Test video files not found")
-            
+            self.skipTest("Test files video2.mp4 not found in both original and backup directories")
+        
+        # Extract metadata from both files
         original_meta = VideoMetadataParser.parse_video(original_path)
         backup_meta = VideoMetadataParser.parse_video(backup_path)
         
-        self.assertIsNotNone(original_meta)
-        self.assertIsNotNone(backup_meta)
-        self.assertEqual(original_meta.resolution, backup_meta.resolution)
-        self.assertEqual(original_meta.duration, backup_meta.duration)
-        self.assertEqual(original_meta.codec, backup_meta.codec)
+        # Check that metadata was extracted successfully
+        self.assertIsNotNone(original_meta, "Failed to extract metadata from original video")
+        self.assertIsNotNone(backup_meta, "Failed to extract metadata from backup video")
+        
+        if original_meta and backup_meta:
+            # Compare key attributes
+            self.assertEqual(original_meta.resolution, backup_meta.resolution, 
+                           "Resolution should match between original and backup")
+            self.assertEqual(original_meta.duration, backup_meta.duration,
+                           "Duration should match between original and backup")
+            self.assertEqual(original_meta.codec, backup_meta.codec,
+                           "Codec should match between original and backup")
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
