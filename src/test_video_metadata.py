@@ -27,8 +27,8 @@ class TestVideoMetadata(unittest.TestCase):
         cls.original_dir.mkdir(parents=True, exist_ok=True)
         cls.backup_dir.mkdir(parents=True, exist_ok=True)
         
-        # Test video paths
-        cls.test_video_path = cls.original_dir / 'video1.mp4'
+        # Test video paths - using  PXL_20230724_104955429_2.mp4 which exists in both original and backup
+        cls.test_video_path = cls.original_dir / 'PXL_20230724_104955429_2.mp4'
         cls.nonexistent_video = cls.test_data_dir / 'nonexistent.mp4'
         
         # Create a corrupted video file for testing
@@ -146,12 +146,12 @@ class TestVideoMetadata(unittest.TestCase):
     
     def test_video_comparison(self):
         """Test comparison of metadata between original and backup videos"""
-        # Skip if video2.mp4 doesn't exist in both directories
-        original_path = self.original_dir / 'video2.mp4'
-        backup_path = self.backup_dir / 'video2.mp4'
+        # Skip if PXL_20230724_104955429_2.mp4 doesn't exist in both directories
+        original_path = self.original_dir / 'PXL_20230724_104955429_2.mp4'
+        backup_path = self.backup_dir / 'PXL_20230724_104955429_2.mp4'
         
         if not (original_path.exists() and backup_path.exists()):
-            self.skipTest("Test files video2.mp4 not found in both original and backup directories")
+            self.skipTest("Test files PXL_20230724_104955429_2.mp4 not found in both original and backup directories")
         
         # Extract metadata from both files
         original_meta = VideoMetadataParser.parse_video(original_path)

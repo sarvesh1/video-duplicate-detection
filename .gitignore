@@ -194,3 +194,15 @@ cython_debug/
 .cursorindexingignore
 test_data/resized/PXL_20230724_104955429.mp4
 .gitignore
+test_data/original/video1.mp4
+test_data/backup/video2.mp4
+test_data/original/PXL_20230724_104955429.mp4
+test_data/original/video2.mp4
+test_data/resized/PXL_20230724_104955429.mp4:Zone.Identifier
+test_data/backup/PXL_20230724_104955429_2.mp4
+.gitignore
+test_data/resized/PXL_20230724_104955429_2.mp4
+.gitignore
+test_data/backup/PXL_20230724_104955429_2.mp4:Zone.Identifier
+.gitignore
+test_data/original/PXL_20230724_104955429_2.mp4
