@@ -8,10 +8,8 @@ based on their metadata and characteristics.
 from pathlib import Path
 from typing import Dict, List, Set, Tuple, Optional, NamedTuple, Any
 from dataclasses import dataclass, field
-import logging
 from enum import Enum
 from datetime import datetime
-from collections import defaultdict
 from src.video_metadata import VideoMetadata
 from src.data_structures import FileInfo
 
@@ -167,7 +165,7 @@ class DuplicateDetector:
             duration_matches: List[Tuple[Path, VideoMetadata]] = []
             
             # Try each duration as the base to find the largest matching group
-            for base_path, base_metadata in files_metadata:
+            for _, base_metadata in files_metadata:
                 current_matches = []
                 for path, metadata in files_metadata:
                     if abs(metadata.duration - base_metadata.duration) <= self.DURATION_TOLERANCE:
@@ -515,7 +513,7 @@ class DuplicateDetector:
             List of DuplicateGroup objects representing detected duplicates
         """
         # Step 1: Find initial duplicate candidates
-        initial_candidates = self.find_duplicate_candidates()
+        self.find_duplicate_candidates()
         
         # Step 2: Validate and build relationships for all candidates
         all_relationships = self.build_relationships()

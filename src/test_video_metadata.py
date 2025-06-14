@@ -334,14 +334,17 @@ class TestVideoMetadata(unittest.TestCase):
                 def read(self, size=None):
                     """Simulate network latency on read"""
                     time.sleep(0.01)  # 10ms latency per read
+                    assert self._file is not None
                     return self._file.read(size)
                 
                 def seek(self, offset, whence=0):
                     """Simulate network latency on seek"""
                     time.sleep(0.01)  # 10ms latency per seek
+                    assert self._file is not None
                     return self._file.seek(offset, whence)
                 
                 def tell(self):
+                    assert self._file is not None
                     return self._file.tell()
             
             # Time parsing with simulated latency
