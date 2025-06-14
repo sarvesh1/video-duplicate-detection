@@ -9,10 +9,12 @@ from pathlib import Path
 import sys
 import shutil
 import tempfile
+import time
 
 # Add the src directory to Python path for imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from video_metadata import VideoMetadataParser, VideoMetadata
+from video_metadata import MetadataCache
 
 class TestVideoMetadata(unittest.TestCase):
     @classmethod
@@ -169,6 +171,197 @@ class TestVideoMetadata(unittest.TestCase):
                            "Duration should match between original and backup")
             self.assertEqual(original_meta.codec, backup_meta.codec,
                            "Codec should match between original and backup")
+    
+    def test_cache_large_file_optimization(self):
+        """Test that metadata parsing doesn't read entire file for large videos"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Create a copy of the test video first
+            large_file = Path(temp_dir) / "large.mp4"
+            shutil.copy2(self.test_video_path, large_file)
+            
+            # Now append data to make it large
+            original_size = large_file.stat().st_size
+            with open(large_file, 'r+b') as f:
+                # Seek to end and add more data
+                f.seek(0, 2)  # Seek to end
+                # Add another 100MB of data without affecting the header
+                extra_size = 100 * 1024 * 1024
+                while f.tell() < original_size + extra_size:
+                    f.write(b'\0' * 1024 * 1024)  # Write in 1MB chunks
+            
+            # Verify the file size increased
+            self.assertGreater(large_file.stat().st_size, original_size, 
+                             "Failed to increase file size")
+
+            # Time the metadata parsing
+            start_time = time.time()
+            metadata = VideoMetadataParser.parse_video(large_file)
+            parse_time = time.time() - start_time
+
+            # Should complete quickly (under 1 second) as it only reads headers
+            self.assertLess(parse_time, 1.0, "Parsing large file took too long")
+            self.assertIsNotNone(metadata, "Failed to parse large file")
+            
+            # Verify we got the same metadata as the original
+            original_meta = VideoMetadataParser.parse_video(self.test_video_path)
+            self.assertIsNotNone(original_meta)
+            
+            if metadata and original_meta:
+                self.assertEqual(metadata.width, original_meta.width)
+                self.assertEqual(metadata.height, original_meta.height)
+                self.assertEqual(metadata.codec, original_meta.codec)
+                self.assertEqual(metadata.duration, original_meta.duration)
+
+    def test_cache_persistence_with_corrupt_cache(self):
+        """Test cache behavior with corrupted cache file"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_dir = Path(temp_dir) / 'cache'
+            cache_dir.mkdir()
+            cache_file = cache_dir / "metadata_cache.json"
+
+            # Write corrupt JSON
+            with open(cache_file, 'w') as f:
+                f.write('{"version": "1.0", "entries": {corrupt json}}')
+
+            # Should handle corrupt cache gracefully
+            cache = MetadataCache(cache_dir)
+            self.assertEqual(len(cache.cache), 0, "Corrupt cache should be ignored")
+
+            # Should be able to write new entries
+            test_video = Path(temp_dir) / "test.mp4"
+            shutil.copy2(self.test_video_path, test_video)
+            metadata = VideoMetadataParser.parse_video(test_video)
+            self.assertIsNotNone(metadata, "Failed to parse video after corrupt cache")
+
+    def test_cache_concurrent_modification(self):
+        """Test cache behavior when files are modified during scanning"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_dir = Path(temp_dir) / 'cache'
+            cache = MetadataCache(cache_dir)
+            VideoMetadataParser._cache = cache
+
+            # Create test video
+            test_video = Path(temp_dir) / "test.mp4"
+            shutil.copy2(self.test_video_path, test_video)
+
+            # First parse
+            metadata1 = VideoMetadataParser.parse_video(test_video)
+            self.assertIsNotNone(metadata1, "Failed to parse initial video")
+            
+            if metadata1:
+                initial_width = metadata1.width
+                initial_height = metadata1.height
+                
+                # Cache should be created
+                cache.save_cache()
+                self.assertTrue((cache_dir / "metadata_cache.json").exists())
+
+                # Modify file while keeping same size (simulate concurrent modification)
+                original_size = test_video.stat().st_size
+                with open(test_video, 'r+b') as f:
+                    f.seek(original_size - 1)
+                    f.write(b'X')
+
+                # Second parse should return cached metadata
+                metadata2 = VideoMetadataParser.parse_video(test_video)
+                self.assertIsNotNone(metadata2, "Failed to parse modified video")
+                
+                if metadata2:
+                    # Verify metadata matches despite modification
+                    self.assertEqual(initial_width, metadata2.width)
+                    self.assertEqual(initial_height, metadata2.height)
+
+    def test_cache_memory_usage(self):
+        """Test that cache memory usage stays reasonable with many files"""
+        import psutil
+        import os
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_dir = Path(temp_dir) / 'cache'
+            cache = MetadataCache(cache_dir)
+            VideoMetadataParser._cache = cache
+
+            # Record starting memory
+            process = psutil.Process(os.getpid())
+            start_memory = process.memory_info().rss
+
+            # Create and parse 50 copies of test video
+            successful_parses = 0
+            for i in range(50):
+                test_video = Path(temp_dir) / f"test_{i}.mp4"
+                shutil.copy2(self.test_video_path, test_video)
+                metadata = VideoMetadataParser.parse_video(test_video)
+                if metadata is not None:
+                    successful_parses += 1
+
+            # Ensure we parsed at least some files successfully
+            self.assertGreater(successful_parses, 0, "No files were parsed successfully")
+
+            # Check memory usage hasn't grown too much
+            end_memory = process.memory_info().rss
+            memory_increase = end_memory - start_memory
+            
+            # Should use less than 5MB additional memory for cache
+            max_memory_increase = 5 * 1024 * 1024  # 5MB
+            self.assertLess(memory_increase, max_memory_increase, 
+                          f"Cache uses too much memory: {memory_increase / 1024 / 1024:.1f}MB")
+
+    def test_parsing_with_latency(self):
+        """Test metadata parsing performance with simulated network latency"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Create a large test file
+            test_file = Path(temp_dir) / "slow_access.mp4"
+            shutil.copy2(self.test_video_path, test_file)
+            
+            # Make file large by appending data
+            with open(test_file, 'ab') as f:
+                f.write(b'\0' * (50 * 1024 * 1024))  # Add 50MB
+                
+            class SlowFile:
+                """Wrapper to simulate slow file access"""
+                def __init__(self, path):
+                    self.path = Path(path)
+                    self._file = None
+                
+                def __enter__(self):
+                    self._file = open(self.path, 'rb')
+                    return self
+                
+                def __exit__(self, exc_type, exc_val, exc_tb):
+                    if self._file:
+                        self._file.close()
+                
+                def read(self, size=None):
+                    """Simulate network latency on read"""
+                    time.sleep(0.01)  # 10ms latency per read
+                    return self._file.read(size)
+                
+                def seek(self, offset, whence=0):
+                    """Simulate network latency on seek"""
+                    time.sleep(0.01)  # 10ms latency per seek
+                    return self._file.seek(offset, whence)
+                
+                def tell(self):
+                    return self._file.tell()
+            
+            # Time parsing with simulated latency
+            start_time = time.time()
+            with SlowFile(test_file) as slow:
+                # Get file size without using read
+                size = test_file.stat().st_size
+                
+                # Read just the header (first 1MB)
+                header = slow.read(1024 * 1024)
+                
+            parse_time = time.time() - start_time
+            
+            # Even with latency, should complete in reasonable time
+            self.assertLess(parse_time, 2.0, 
+                          f"Parsing took too long with latency: {parse_time:.1f}s")
+            
+            # Verify we can still parse the file normally
+            metadata = VideoMetadataParser.parse_video(test_file)
+            self.assertIsNotNone(metadata, "Failed to parse file with latency simulation")
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

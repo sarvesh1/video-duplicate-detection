@@ -5,10 +5,13 @@ Extracts detailed metadata from video files using ffmpeg-python.
 
 import ffmpeg
 import os
+import json
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from typing import Dict, Optional, Any
-from datetime import timedelta
+from datetime import datetime, timedelta
+
+CACHE_VERSION = "1.0"  # For future cache format changes
 
 @dataclass
 class VideoMetadata:
@@ -34,13 +37,70 @@ class VideoMetadata:
         td = timedelta(seconds=int(self.duration))
         return str(td)
 
+class MetadataCache:
+    """Cache for video metadata to avoid re-reading files"""
+    
+    def __init__(self, cache_dir: Optional[Path] = None):
+        self.cache_dir = cache_dir or Path.home() / '.video_duplicate_detection' / 'cache'
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.cache_file = self.cache_dir / "metadata_cache.json"
+        self.cache: Dict[str, dict] = self._load_cache()
+    
+    def _load_cache(self) -> Dict[str, dict]:
+        """Load cache from disk"""
+        if self.cache_file.exists():
+            try:
+                with open(self.cache_file, 'r') as f:
+                    data = json.load(f)
+                    if data.get('version') == CACHE_VERSION:
+                        return data.get('entries', {})
+            except Exception:
+                pass
+        return {}
+    
+    def save_cache(self):
+        """Save cache to disk"""
+        with open(self.cache_file, 'w') as f:
+            json.dump({
+                'version': CACHE_VERSION,
+                'entries': self.cache,
+                'last_updated': datetime.now().isoformat()
+            }, f)
+    
+    def get(self, file_path: Path) -> Optional[VideoMetadata]:
+        """Get cached metadata if file hasn't changed"""
+        key = str(file_path)
+        try:
+            if key in self.cache:
+                cached = self.cache[key]
+                current_mtime = file_path.stat().st_mtime
+                if current_mtime == cached.get('mtime'):
+                    return VideoMetadata(**cached['metadata'])
+        except Exception:
+            pass
+        return None
+    
+    def set(self, file_path: Path, metadata: VideoMetadata):
+        """Cache metadata for a file"""
+        try:
+            self.cache[str(file_path)] = {
+                'mtime': file_path.stat().st_mtime,
+                'metadata': asdict(metadata),
+                'cached_at': datetime.now().isoformat()
+            }
+        except Exception:
+            pass
+
 class VideoMetadataParser:
     """Parser for extracting metadata from video files"""
+    
+    _cache = MetadataCache()
     
     @staticmethod
     def parse_video(file_path: str | Path) -> Optional[VideoMetadata]:
         """
         Extract metadata from a video file using ffmpeg.
+        Uses caching and optimized probing for better performance.
         
         Args:
             file_path: Path to the video file
@@ -48,11 +108,22 @@ class VideoMetadataParser:
         Returns:
             VideoMetadata object if successful, None if parsing fails
         """
-        try:
-            probe = ffmpeg.probe(str(file_path))
-            video_info = next(s for s in probe['streams'] if s['codec_type'] == 'video')
+        file_path = Path(file_path)
+        
+        # Try to get from cache first
+        cached = VideoMetadataParser._cache.get(file_path)
+        if cached:
+            return cached
             
-            # Get audio info if available
+        try:
+            # Use ffprobe with optimized settings
+            probe = ffmpeg.probe(
+                str(file_path),
+                cmd='ffprobe',  # Ensure we use ffprobe directly
+                v='error',  # Only show errors in ffprobe output
+            )
+            
+            video_info = next(s for s in probe['streams'] if s['codec_type'] == 'video')
             audio_info = next((s for s in probe['streams'] if s['codec_type'] == 'audio'), None)
             
             # Extract duration - use format duration if available, otherwise stream duration
@@ -66,7 +137,7 @@ class VideoMetadataParser:
             fps_parts = video_info.get('r_frame_rate', '0/1').split('/')
             fps = float(fps_parts[0]) / float(fps_parts[1]) if len(fps_parts) == 2 else 0.0
             
-            return VideoMetadata(
+            metadata = VideoMetadata(
                 duration=duration,
                 width=int(video_info['width']),
                 height=int(video_info['height']),
@@ -78,6 +149,15 @@ class VideoMetadataParser:
                 file_size=size
             )
             
+            # Cache the result
+            VideoMetadataParser._cache.set(file_path, metadata)
+            
+            return metadata
+            
+        except ffmpeg.Error as e:
+            print(f"Error parsing video metadata for {file_path}:")
+            print(f"ffprobe stderr output: {e.stderr.decode()}")
+            return None
         except Exception as e:
             print(f"Error parsing video metadata for {file_path}: {str(e)}")
             return None
@@ -100,3 +180,7 @@ class VideoMetadataParser:
             'has_valid_fps': metadata.fps > 0,
             'has_audio': metadata.audio_codec is not None
         }
+
+    def __del__(self):
+        """Save cache when parser is destroyed"""
+        self._cache.save_cache()
