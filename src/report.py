@@ -254,7 +254,7 @@ class ReportGenerator:
         # Details for each duplicate group
         if analyses:
             lines.extend([
-                "Format: [Group #] Original [Resolution] → Duplicates [Resolution, Size] | Issues",
+                "Format: Group # | Original | Original Resolution | Duplicates | Duplicate Resolution | Duplicate Size | Issues",
                 "-" * 120
             ])
             
@@ -266,13 +266,13 @@ class ReportGenerator:
                 dup_entries = []
                 for dup in analysis.duplicates:
                     dup_path = self._get_relative_path(dup['path'])
-                    dup_info = f"{dup_path} [{dup['resolution']}, {self._humanize_size(dup['size'])}]"
+                    dup_info = f"{dup_path} | {dup['resolution']} | {self._humanize_size(dup['size'])}"
                     if dup['issues']:
                         dup_info += f" ({', '.join(dup['issues'])})"
                     dup_entries.append(dup_info)
                 
                 # Build the single-line entry
-                line = f"[{i}] {orig_path} [{analysis.original_resolution}, {self._humanize_size(self.metadata_store.files[str(analysis.original_path)].file_size)}] → {' | '.join(dup_entries)}"
+                line = f"{i} | {orig_path} | {analysis.original_resolution} | {self._humanize_size(self.metadata_store.files[str(analysis.original_path)].file_size)} | {' | '.join(dup_entries)}"
                 
                 # Add group issues if any
                 if analysis.issues:

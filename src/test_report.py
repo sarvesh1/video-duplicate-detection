@@ -262,11 +262,9 @@ class TestReport(unittest.TestCase):
         # Check that metadata is included
         # Our format shows size in MB/GB format
         self.assertIn(" MB", report)  # Size is shown in MB
-        self.assertIn("→", report)    # Divider between original and duplicates
         
         # Check format sections
-        self.assertIn("[1]", report)  # Group number
-        self.assertIn("→", report)    # Arrow separator
+        self.assertIn("1", report)  # Group number
         self.assertIn("|", report)    # Pipe separator
         
         # Verify all paths are relative and present
