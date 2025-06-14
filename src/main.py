@@ -3,6 +3,7 @@ Main entry point for the Video Duplicate Detection tool.
 """
 
 import sys
+import signal
 from pathlib import Path
 
 # Add the parent directory of `src` to the Python path
@@ -15,6 +16,7 @@ from report import (
     ASPECT_RATIO_TOLERANCE
 )
 from duplicate_detector import DuplicateDetector
+from video_metadata import VideoMetadataParser
 
 def process_duplicate_groups(duplicate_groups, file_info_map):
     """Process duplicate groups into video relationships with rotation detection.
@@ -89,11 +91,22 @@ def process_duplicate_groups(duplicate_groups, file_info_map):
 
     return relationships
 
+def signal_handler(sig, frame):
+    """Handle interrupt signals by saving cache before exit"""
+    _ = sig, frame  # Unused parameters
+    print("\nInterrupted. Saving cache...")
+    VideoMetadataParser.save_cache()
+    sys.exit(0)
+
 def main():
     """Main entry point"""
     if len(sys.argv) < 2:
         print("Usage: python main.py <directory1> [directory2 ...]")
         sys.exit(1)
+    
+    # Set up signal handlers to save cache on interrupt
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
 
     # Initialize components
     scanner = DirectoryScanner()
@@ -140,6 +153,9 @@ def main():
         print("\n" + report_generator.generate_text_report())
     else:
         print("\nNo duplicates found in the specified directories.")
+    
+    # Ensure cache is saved before exit
+    VideoMetadataParser.save_cache()
 
 if __name__ == "__main__":
     main()

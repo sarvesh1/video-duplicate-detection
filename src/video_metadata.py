@@ -45,6 +45,8 @@ class MetadataCache:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.cache_file = self.cache_dir / "metadata_cache.json"
         self.cache: Dict[str, dict] = self._load_cache()
+        self.unsaved_changes = 0
+        self.save_threshold = 10  # Save every 10 changes
     
     def _load_cache(self) -> Dict[str, dict]:
         """Load cache from disk"""
@@ -88,6 +90,11 @@ class MetadataCache:
                 'metadata': asdict(metadata),
                 'cached_at': datetime.now().isoformat()
             }
+            self.unsaved_changes += 1
+            # Auto-save periodically to balance performance and safety
+            if self.unsaved_changes >= self.save_threshold:
+                self.save_cache()
+                self.unsaved_changes = 0
         except Exception:
             pass
 
@@ -116,11 +123,14 @@ class VideoMetadataParser:
             return cached
             
         try:
-            # Use ffprobe with optimized settings
+            # Use ffprobe with network-optimized settings
             probe = ffmpeg.probe(
                 str(file_path),
                 cmd='ffprobe',  # Ensure we use ffprobe directly
                 v='error',  # Only show errors in ffprobe output
+                analyzeduration='1000000',  # Analyze only first 1MB for speed
+                probesize='1000000',  # Probe only first 1MB
+                select_streams='v:0',  # Only analyze first video stream
             )
             
             video_info = next(s for s in probe['streams'] if s['codec_type'] == 'video')
@@ -149,7 +159,7 @@ class VideoMetadataParser:
                 file_size=size
             )
             
-            # Cache the result
+            # Cache the result (auto-saves periodically)
             VideoMetadataParser._cache.set(file_path, metadata)
             
             return metadata
@@ -161,6 +171,11 @@ class VideoMetadataParser:
         except Exception as e:
             print(f"Error parsing video metadata for {file_path}: {str(e)}")
             return None
+    
+    @staticmethod
+    def save_cache():
+        """Save the metadata cache to disk"""
+        VideoMetadataParser._cache.save_cache()
     
     @staticmethod
     def validate_metadata(metadata: VideoMetadata) -> Dict[str, bool]:

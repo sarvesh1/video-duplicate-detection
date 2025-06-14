@@ -112,6 +112,11 @@ class DirectoryScanner:
                     if item.suffix.lower() == '.mp4':
                         self.stats['mp4_files'] += 1
                         stat = item.stat()
+                        
+                        # Skip very small files (likely corrupted)
+                        if stat.st_size < 1024:  # Less than 1KB
+                            continue
+                            
                         metadata = FileMetadata(
                             file_path=str(item),
                             file_size=stat.st_size,

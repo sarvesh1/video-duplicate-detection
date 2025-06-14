@@ -29,6 +29,21 @@ python src/main.py ~/myvideos/
 ```
 This command assumes you have placed your video files in `~/myvideos/`. Adjust the path as necessary.
 
+## Performance & Caching
+The application includes intelligent caching to dramatically improve performance on subsequent runs:
+
+### Metadata Cache
+- **Location**: `~/.video_duplicate_detection/cache/metadata_cache.json`
+- **Persistence**: Cache automatically persists across sessions
+- **Smart Invalidation**: Files are re-analyzed only when modified
+- **Performance**: Reduces scan time from hours to minutes for unchanged files
+
+### Cache Management
+- Cache is saved automatically after processing each file
+- Cache is preserved when interrupting the scan (Ctrl+C)
+- No manual cache management required
+- Cache includes file modification timestamps for accuracy
+
 ## Report Generation
 The application generates a text report summarizing duplicate relationships and metadata details. The report includes:
 - File paths of duplicate videos.
