@@ -358,7 +358,7 @@ class TestDuplicateDetector(unittest.TestCase):
         
         # Timestamp should be invalid (too far apart - more than 60 seconds)
         self.assertFalse(result.timestamp_valid)
-        self.assertIn("suspicious timestamp", result.reason)
+        self.assertIn("disqualifying timestamp difference", result.reason)
     
     def test_validate_size_mismatch(self):
         """Test validation with unexpected file sizes"""

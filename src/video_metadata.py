@@ -133,14 +133,16 @@ class VideoMetadataParser:
             return cached
             
         try:
-            # Use ffprobe with network-optimized settings
+            # Use ffprobe with optimized settings for speed
             probe = ffmpeg.probe(
                 str(file_path),
                 cmd='ffprobe',  # Ensure we use ffprobe directly
                 v='error',  # Only show errors in ffprobe output
-                analyzeduration='1000000',  # Analyze only first 1MB for speed
-                probesize='1000000',  # Probe only first 1MB
+                analyzeduration='65536',  # Analyze only first 64KB for speed
+                probesize='65536',  # Probe only first 64KB
                 select_streams='v:0',  # Only analyze first video stream
+                fflags='+nobuffer',  # Minimize buffering
+                flags='low_delay'  # Reduce delay
             )
             
             video_info = next(s for s in probe['streams'] if s['codec_type'] == 'video')
