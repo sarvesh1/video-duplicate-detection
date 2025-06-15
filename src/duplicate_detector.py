@@ -297,10 +297,14 @@ class DuplicateDetector:
                 # If video creation times differ by more than 60 seconds, they're different recordings
                 strict_timestamp_threshold = 60  # seconds
                 timestamp_valid = time_diff_seconds <= strict_timestamp_threshold
+            elif (original_meta.creation_time and not duplicate_meta.creation_time) or (not original_meta.creation_time and duplicate_meta.creation_time):
+                # One file has creation time, the other doesn't - this is suspicious for files with same name
+                # This suggests they might be from different sources or processed differently
+                timestamp_valid = False
+                time_diff_seconds = float('inf')  # Mark as maximum difference
             else:
-                # If no video metadata creation time available, skip timestamp validation
-                # This prevents false matches based on filesystem dates
-                timestamp_valid = True  # Neutral - don't penalize missing metadata
+                # Neither file has video metadata creation time - neutral
+                timestamp_valid = True
             
             # Validate file size correlation with resolution
             original_pixels = original_meta.width * original_meta.height
@@ -349,7 +353,9 @@ class DuplicateDetector:
             if not aspect_ratio_match:
                 reasons.append("aspect ratio mismatch")
             if not timestamp_valid:
-                if time_diff_seconds > 86400:  # More than 1 day
+                if time_diff_seconds == float('inf'):
+                    reasons.append("mismatched creation time metadata (one file has creation time, other doesn't)")
+                elif time_diff_seconds > 86400:  # More than 1 day
                     time_diff_days = time_diff_seconds / 86400
                     reasons.append(f"disqualifying timestamp difference ({time_diff_days:.1f} days apart)")
                 else:
