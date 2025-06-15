@@ -319,7 +319,6 @@ class ReportGenerator:
                 width_ratio = next_res[0] / curr_res[0]
                 height_ratio = next_res[1] / curr_res[1]
 
-                print(f"Raw ratios - width: {width_ratio:.4f}, height: {height_ratio:.4f}")
 
                 # Check for consistent scaling and reasonable ratios
                 if not (0.1 <= width_ratio <= 1.0 and abs(width_ratio - height_ratio) < 0.01):
@@ -328,7 +327,6 @@ class ReportGenerator:
                     # Use width ratio since common video resolutions are based on width
                     ratio = round(width_ratio, 2)
                     scale_ratios.add(ratio)
-                    print(f"Added scale ratio {ratio} for {curr_res} -> {next_res}")
 
         # Common scale ratios (e.g., 1080p->720p->480p)
         common_ratios = {0.67, 0.44}  # Approximations of standard scaling

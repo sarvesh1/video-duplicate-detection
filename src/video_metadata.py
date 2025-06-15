@@ -25,6 +25,7 @@ class VideoMetadata:
     audio_codec: Optional[str] = None
     audio_sample_rate: Optional[int] = None
     file_size: int = 0
+    creation_time: Optional[datetime] = None  # Video creation time from metadata
     
     @property
     def resolution(self) -> str:
@@ -77,7 +78,11 @@ class MetadataCache:
                 cached = self.cache[key]
                 current_mtime = file_path.stat().st_mtime
                 if current_mtime == cached.get('mtime'):
-                    return VideoMetadata(**cached['metadata'])
+                    metadata_dict = cached['metadata'].copy()
+                    # Convert ISO string back to datetime if present
+                    if metadata_dict.get('creation_time'):
+                        metadata_dict['creation_time'] = datetime.fromisoformat(metadata_dict['creation_time'])
+                    return VideoMetadata(**metadata_dict)
         except Exception:
             pass
         return None
@@ -85,9 +90,14 @@ class MetadataCache:
     def set(self, file_path: Path, metadata: VideoMetadata):
         """Cache metadata for a file"""
         try:
+            metadata_dict = asdict(metadata)
+            # Convert datetime to ISO string for JSON serialization
+            if metadata_dict.get('creation_time'):
+                metadata_dict['creation_time'] = metadata_dict['creation_time'].isoformat()
+            
             self.cache[str(file_path)] = {
                 'mtime': file_path.stat().st_mtime,
-                'metadata': asdict(metadata),
+                'metadata': metadata_dict,
                 'cached_at': datetime.now().isoformat()
             }
             self.unsaved_changes += 1
@@ -147,6 +157,24 @@ class VideoMetadataParser:
             fps_parts = video_info.get('r_frame_rate', '0/1').split('/')
             fps = float(fps_parts[0]) / float(fps_parts[1]) if len(fps_parts) == 2 else 0.0
             
+            # Extract creation time from video metadata
+            creation_time = None
+            format_tags = probe.get('format', {}).get('tags', {})
+            if 'creation_time' in format_tags:
+                try:
+                    # Parse ISO 8601 format (e.g., "2023-04-16T10:20:52.000000Z")
+                    creation_time_str = format_tags['creation_time']
+                    creation_time = datetime.fromisoformat(creation_time_str.replace('Z', '+00:00'))
+                except ValueError:
+                    pass
+            elif 'com.apple.quicktime.creationdate' in format_tags:
+                try:
+                    # Parse Apple QuickTime format (e.g., "2023-04-16T12:20:51+0200")
+                    creation_time_str = format_tags['com.apple.quicktime.creationdate']
+                    creation_time = datetime.fromisoformat(creation_time_str)
+                except ValueError:
+                    pass
+            
             metadata = VideoMetadata(
                 duration=duration,
                 width=int(video_info['width']),
@@ -156,7 +184,8 @@ class VideoMetadataParser:
                 fps=fps,
                 audio_codec=audio_info['codec_name'] if audio_info else None,
                 audio_sample_rate=int(audio_info['sample_rate']) if audio_info else None,
-                file_size=size
+                file_size=size,
+                creation_time=creation_time
             )
             
             # Cache the result (auto-saves periodically)

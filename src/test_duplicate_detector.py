@@ -297,16 +297,53 @@ class TestDuplicateDetector(unittest.TestCase):
     
     def test_validate_suspicious_timestamp(self):
         """Test validation with suspicious timestamps"""
-        # Create a video with timestamp far in the future
+        # Create a video with video metadata creation time far in the future
         future_path = self.base_path / 'future' / 'video1.mp4'
         future_time = datetime(2024, 1, 1, tzinfo=timezone.utc)  # 1 year later
+        
+        # Create video metadata with creation time far in the future
+        future_meta = VideoMetadata(
+            duration=30.5,  # Same duration
+            width=1280,     # Lower resolution
+            height=720,
+            codec="h264",
+            bitrate=2000000,
+            fps=30.0,
+            audio_codec="aac",
+            audio_sample_rate=44100,
+            file_size=5000000,
+            creation_time=future_time  # Video creation time far in future
+        )
+        
+        # Also set original video metadata to have creation time
+        original_meta_with_time = VideoMetadata(
+            duration=30.5,
+            width=1920,
+            height=1080,
+            codec="h264",
+            bitrate=5000000,
+            fps=30.0,
+            audio_codec="aac",
+            audio_sample_rate=44100,
+            file_size=10000000,
+            creation_time=self.original_time
+        )
+        
+        # Update original file info to have video metadata with creation time
+        self.file_info_map[self.original_path] = FileInfo(
+            self.original_path,
+            created_at=self.original_time,
+            modified_at=self.original_time,
+            file_size=10000000,
+            video_metadata=original_meta_with_time
+        )
         
         self.file_info_map[future_path] = FileInfo(
             future_path,
             created_at=future_time,
             modified_at=future_time,
             file_size=5000000,
-            video_metadata=self.resized_meta
+            video_metadata=future_meta
         )
         
         group = DuplicateGroup(
@@ -319,7 +356,7 @@ class TestDuplicateDetector(unittest.TestCase):
         validated_group = self.detector.validate_duplicates(group)
         result = validated_group.validation_results[future_path]
         
-        # Timestamp should be invalid (too far apart)
+        # Timestamp should be invalid (too far apart - more than 60 seconds)
         self.assertFalse(result.timestamp_valid)
         self.assertIn("suspicious timestamp", result.reason)
     

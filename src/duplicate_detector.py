@@ -208,34 +208,41 @@ class DuplicateDetector:
         original_path = None
         total_score = 0.0
         
-        # Find highest resolution and earliest timestamp
+        # Find highest resolution and earliest video metadata timestamp
         for path, metadata in candidates:
             resolution = metadata.width * metadata.height
-            timestamp = self.file_info_map[path].created_at.timestamp()
             
             if resolution > max_resolution:
                 max_resolution = resolution
-            if timestamp < earliest_time:
-                earliest_time = timestamp
+            
+            # Only use video metadata creation time, ignore filesystem dates
+            if metadata.creation_time:
+                timestamp = metadata.creation_time.timestamp()
+                if timestamp < earliest_time:
+                    earliest_time = timestamp
         
         # Score each candidate
         for path, metadata in candidates:
             file_info = self.file_info_map[path]
             resolution = metadata.width * metadata.height
-            timestamp = file_info.created_at.timestamp()
             
             # Calculate score components
             resolution_score = resolution / max_resolution  # 0-1 score for resolution
-            time_score = 1 - ((timestamp - earliest_time) / (86400 * 30))  # Time diff in 30 days
-            time_score = max(0, min(1, time_score))  # Clamp between 0-1
+            
+            # Only use video metadata creation time for scoring
+            time_score = 0.5  # Default neutral score if no video creation time
+            if metadata.creation_time and earliest_time != float('inf'):
+                timestamp = metadata.creation_time.timestamp()
+                time_score = 1 - ((timestamp - earliest_time) / (86400 * 30))  # Time diff in 30 days
+                time_score = max(0, min(1, time_score))  # Clamp between 0-1
             
             # Calculate file size score with safe access
             file_size = file_info.file_size if file_info else 0
             max_size = max((self.file_info_map[p].file_size for p, _ in candidates), default=1)
             size_score = file_size / max_size if max_size > 0 else 0
             
-            # Weighted score (prioritize file size over resolution)
-            score = (size_score * 0.5) + (resolution_score * 0.3) + (time_score * 0.2)
+            # Weighted score (prioritize file size over resolution, reduce time weight since it's less reliable)
+            score = (size_score * 0.6) + (resolution_score * 0.3) + (time_score * 0.1)
             
             if score > total_score:
                 total_score = score
@@ -277,11 +284,23 @@ class DuplicateDetector:
             ratio_diff = abs(original_ratio - duplicate_ratio) / original_ratio
             aspect_ratio_match = ratio_diff <= self.ASPECT_RATIO_TOLERANCE
             
-            # Validate timestamps
-            time_diff = abs(
-                (duplicate_info.created_at - original_info.created_at).total_seconds()
-            ) / (24 * 3600)  # Convert to days
-            timestamp_valid = time_diff <= self.MAX_TIMESTAMP_DIFF_DAYS
+            # Validate timestamps using only video metadata creation time
+            timestamp_valid = True
+            time_diff_seconds = 0
+            
+            # Only use video metadata creation time - no filesystem date fallback
+            if (original_meta.creation_time and duplicate_meta.creation_time):
+                time_diff_seconds = abs(
+                    (duplicate_meta.creation_time - original_meta.creation_time).total_seconds()
+                )
+                # For files with identical names and durations, use very strict timestamp validation
+                # If video creation times differ by more than 60 seconds, they're different recordings
+                strict_timestamp_threshold = 60  # seconds
+                timestamp_valid = time_diff_seconds <= strict_timestamp_threshold
+            else:
+                # If no video metadata creation time available, skip timestamp validation
+                # This prevents false matches based on filesystem dates
+                timestamp_valid = True  # Neutral - don't penalize missing metadata
             
             # Validate file size correlation with resolution
             original_pixels = original_meta.width * original_meta.height
@@ -305,26 +324,36 @@ class DuplicateDetector:
                 bitrate_valid = bitrate_diff_ratio <= self.EXPECTED_SIZE_RATIO_TOLERANCE
             
             # Calculate overall validation score
-            weights = {
-                'aspect_ratio': 0.4,
-                'timestamp': 0.1,
-                'size': 0.2,
-                'bitrate': 0.3
-            }
-            
-            score = (
-                (aspect_ratio_match * weights['aspect_ratio']) +
-                (timestamp_valid * weights['timestamp']) +
-                (size_correlation_valid * weights['size']) +
-                (bitrate_valid * weights['bitrate'])
-            )
+            # For same-name, same-duration files, timestamp validation is critical
+            # If timestamp validation fails due to large time differences, this should be disqualifying
+            if not timestamp_valid and time_diff_seconds > 86400:  # More than 1 day difference
+                # Large timestamp differences are disqualifying for files with identical names/durations
+                score = 0.0
+            else:
+                weights = {
+                    'aspect_ratio': 0.3,
+                    'timestamp': 0.4,  # Increased weight for timestamp validation
+                    'size': 0.15,
+                    'bitrate': 0.15
+                }
+                
+                score = (
+                    (aspect_ratio_match * weights['aspect_ratio']) +
+                    (timestamp_valid * weights['timestamp']) +
+                    (size_correlation_valid * weights['size']) +
+                    (bitrate_valid * weights['bitrate'])
+                )
             
             # Generate reason string
             reasons = []
             if not aspect_ratio_match:
                 reasons.append("aspect ratio mismatch")
             if not timestamp_valid:
-                reasons.append("suspicious timestamp")
+                if time_diff_seconds > 86400:  # More than 1 day
+                    time_diff_days = time_diff_seconds / 86400
+                    reasons.append(f"disqualifying timestamp difference ({time_diff_days:.1f} days apart)")
+                else:
+                    reasons.append("suspicious timestamp")
             if not size_correlation_valid:
                 reasons.append("unexpected file size")
             if not bitrate_valid:
@@ -395,15 +424,18 @@ class DuplicateDetector:
                     dup_path in validated_group.validation_results):
                     validation_score = validated_group.validation_results[dup_path].overall_score
 
-                variant = ResolutionVariant(
-                    path=dup_path,
-                    width=dup_meta.width,
-                    height=dup_meta.height,
-                    created_at=dup_info.created_at,
-                    confidence_score=validation_score
-                )
-                variants.append(variant)
-                total_confidence *= validation_score
+                # Only include variants that pass minimum confidence threshold
+                # This prevents false matches with disqualifying timestamp differences
+                if validation_score >= 0.1:  # Very low threshold to allow some flexibility, but exclude 0.0 scores
+                    variant = ResolutionVariant(
+                        path=dup_path,
+                        width=dup_meta.width,
+                        height=dup_meta.height,
+                        created_at=dup_info.created_at,
+                        confidence_score=validation_score
+                    )
+                    variants.append(variant)
+                    total_confidence *= validation_score
 
             # Create the relationship if we have variants
             if variants:
@@ -580,15 +612,21 @@ class DuplicateDetector:
                     recommendation="Manual review needed - possible crop or different content"
                 ))
             
-            # Check for suspicious timestamps
+            # Check for suspicious timestamps (only video metadata, no filesystem dates)
             if not validation.timestamp_valid:
-                edge_cases.append(EdgeCaseAnalysis(
-                    file_path=duplicate_path,
-                    issue_type=EdgeCaseType.TIMESTAMP,
-                    severity=Severity.LOW,
-                    details="File timestamps suggest unusual creation order",
-                    recommendation="Review file creation history"
-                ))
+                # Only analyze video metadata creation time
+                if (original_meta.creation_time and duplicate_meta.creation_time):
+                    time_diff_seconds = abs(
+                        (duplicate_meta.creation_time - original_meta.creation_time).total_seconds()
+                    )
+                    time_diff_days = time_diff_seconds / (24 * 3600)
+                    edge_cases.append(EdgeCaseAnalysis(
+                        file_path=duplicate_path,
+                        issue_type=EdgeCaseType.TIMESTAMP,
+                        severity=Severity.HIGH,
+                        details=f"Video creation times differ by {time_diff_days:.1f} days ({time_diff_seconds:.0f} seconds) - likely different recordings with same name",
+                        recommendation="These appear to be different videos despite identical names and durations"
+                    ))
             
             # Check for quality issues (bitrate, size)
             if not validation.bitrate_valid or not validation.size_correlation_valid:
