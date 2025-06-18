@@ -196,12 +196,8 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
-test_data/resized/PXL_20230724_104955429.mp4
-test_data/original/PXL_20230724_104955429.mp4
-test_data/resized/PXL_20230724_104955429.mp4:Zone.Identifier
-test_data/backup/PXL_20230724_104955429_2.mp4
-test_data/resized/PXL_20230724_104955429_2.mp4
-test_data/backup/PXL_20230724_104955429_2.mp4:Zone.Identifier
-test_data/original/PXL_20230724_104955429_2.mp4
-test_data/original/false_match.MP4
-test_data/resized/false_match.MP4
+
+# Test data directories
+test_data/resized/
+test_data/original/
+test_data/backup/

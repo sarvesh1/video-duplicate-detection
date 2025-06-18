@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from src.duplicate_detector import (
     DuplicateDetector, DuplicateGroup, VideoRelationship,
-    ResolutionVariant, ValidationResult
+    ResolutionVariant
 )
 from src.video_metadata import VideoMetadata
 from src.data_structures import FileInfo
@@ -46,6 +46,7 @@ class TestDuplicateDetector(unittest.TestCase):
         self.original_path = self.base_path / 'original' / 'video1.mp4'
         self.resized_path = self.base_path / 'resized' / 'video1.mp4'
         self.unrelated_path = self.base_path / 'original' / 'video2.mp4'
+        self.mov_path = self.base_path / 'original' / 'video1.mov'
         
         # Earlier timestamp for original
         self.original_time = datetime(2023, 1, 1, tzinfo=timezone.utc)
@@ -66,6 +67,13 @@ class TestDuplicateDetector(unittest.TestCase):
                 modified_at=self.resized_time,
                 file_size=5000000,
                 video_metadata=self.resized_meta
+            ),
+            self.mov_path: FileInfo(
+                self.mov_path,
+                created_at=self.original_time,
+                modified_at=self.original_time,
+                file_size=10000000,
+                video_metadata=self.original_meta
             ),
             self.unrelated_path: FileInfo(
                 self.unrelated_path,
@@ -464,6 +472,36 @@ class TestDuplicateDetector(unittest.TestCase):
         # Check scale ratios (1080p -> 720p -> 480p)
         scale_ratios = analysis['scale_ratios']
         self.assertIn(0.67, scale_ratios)  # 1080p -> 720p (approximately)
+        
+    def test_mp4_mov_duplicate_detection(self):
+        """Test that MP4 and MOV files with identical metadata can be validated as duplicates"""
+        # Since the current system groups by full filename, MP4 and MOV files with
+        # different names won't be automatically detected. This test validates that
+        # the comparison logic works correctly for cross-format validation.
+        
+        detector = DuplicateDetector(self.file_info_map)
+        
+        # Create a mock duplicate group to test validation between formats
+        test_group = DuplicateGroup(
+            filename='cross_format_test',
+            original=self.original_path,
+            duplicates=[self.mov_path],
+            confidence_score=0.8
+        )
+        
+        # Test validation of these files as potential duplicates
+        validated_group = detector.validate_duplicates(test_group)
+        validation = validated_group.validation_results[self.mov_path]
+        
+        # Should have high confidence since all metadata matches
+        self.assertGreaterEqual(validation.overall_score, 0.9)
+        self.assertTrue(validation.aspect_ratio_match)
+        self.assertTrue(validation.bitrate_valid)
+        self.assertTrue(validation.size_correlation_valid)
+        self.assertTrue(validation.timestamp_valid)
+        
+        # Verify the validation recognizes them as valid duplicates
+        self.assertIn("all checks passed", validation.reason)
         
     def test_complex_resolution_chain(self):
         """Test handling of complex resolution chain scenarios"""
