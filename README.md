@@ -45,10 +45,30 @@ The application includes intelligent caching to dramatically improve performance
 - Cache includes file modification timestamps for accuracy
 
 ## Report Generation
-The application generates a text report summarizing duplicate relationships and metadata details. The report includes:
-- File paths of duplicate videos.
-- Metadata comparison (e.g., resolution, codec).
-- Recommended actions (e.g., manual review).
+The application can generate both text and interactive HTML reports for analyzing duplicate relationships:
+
+### Text Report (Default)
+The standard text report includes:
+- File paths of duplicate videos
+- Metadata comparison (e.g., resolution, codec)
+- Recommended actions (e.g., manual review)
+
+### Interactive HTML Report
+For bulk duplicate management, the application can generate an interactive HTML interface:
+```bash
+python src/main.py ~/myvideos/ --html
+```
+
+The HTML report features:
+- **Visual thumbnails** of all videos for easy comparison
+- **Interactive selection** with bulk operations (select all, select high-confidence only)
+- **Confidence scoring** with color-coded badges
+- **Detailed metadata** comparison side-by-side
+- **Smart filtering** and grouping of duplicates
+- **Deletion script generation** - downloads a bash script for safe bulk deletion
+- **Mobile-responsive** design for use on any device
+
+The HTML report is saved as `duplicate_report_YYYY-MM-DD_HH-MM-SS.html` in the current directory and can be opened in any web browser.
 
 ## Duplicate Detection Criteria
 

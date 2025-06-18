@@ -17,6 +17,7 @@ from report import (
 )
 from duplicate_detector import DuplicateDetector
 from video_metadata import VideoMetadataParser
+from html_report import HTMLReportGenerator
 
 def process_duplicate_groups(duplicate_groups, file_info_map):
     """Process duplicate groups into video relationships with rotation detection.
@@ -100,8 +101,14 @@ def signal_handler(sig, frame):
 
 def main():
     """Main entry point"""
+    # Check for HTML flag
+    html_mode = '--html' in sys.argv
+    if html_mode:
+        sys.argv.remove('--html')
+    
     if len(sys.argv) < 2:
-        print("Usage: python main.py <directory1> [directory2 ...]")
+        print("Usage: python main.py [--html] <directory1> [directory2 ...]")
+        print("  --html    Generate interactive HTML report instead of text")
         sys.exit(1)
     
     # Set up signal handlers to save cache on interrupt
@@ -141,16 +148,34 @@ def main():
     # Process and validate duplicates
     relationships = process_duplicate_groups(duplicate_groups, file_info_map)
 
-    # Generate and print report
+    # Generate and output report
     if relationships:
-        # Use the absolute path to the workspace root
-        workspace_root = Path(__file__).resolve().parent.parent
-        report_generator = ReportGenerator(
-            relationships=relationships,
-            base_dir=workspace_root,
-            metadata_store=metadata_store
-        )
-        print("\n" + report_generator.generate_text_report())
+        # Use current working directory as base for relative paths
+        workspace_root = Path.cwd()
+        
+        if html_mode:
+            # Generate HTML report
+            html_generator = HTMLReportGenerator(
+                relationships=relationships,
+                base_dir=workspace_root,
+                metadata_store=metadata_store
+            )
+            html_file = html_generator.generate_html_report()
+            print(f"\nHTML report generated: {html_file}")
+            print(f"Open in browser: file://{html_file.absolute()}")
+            print(f"\nInstructions:")
+            print(f"1. Open {html_file.name} in any web browser")
+            print(f"2. Review duplicates and uncheck any files you want to keep")
+            print(f"3. Click 'Generate Deletion Script' to download script")
+            print(f"4. Execute the downloaded script: bash ~/Downloads/selected_deletions.sh")
+        else:
+            # Generate text report (original behavior)
+            report_generator = ReportGenerator(
+                relationships=relationships,
+                base_dir=workspace_root,
+                metadata_store=metadata_store
+            )
+            print("\n" + report_generator.generate_text_report())
     else:
         print("\nNo duplicates found in the specified directories.")
     

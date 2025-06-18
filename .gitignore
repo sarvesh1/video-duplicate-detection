@@ -201,3 +201,4 @@ cython_debug/
 test_data/resized/
 test_data/original/
 test_data/backup/
+.video_duplicate_detection/
