@@ -869,7 +869,7 @@ echo ""
 
 # Confirmation
 read -p "Are you sure you want to delete these files? (y/N): " confirm
-if [[ $$confirm != [yY] ]]; then
+if [[ $confirm != [yY] ]]; then
     echo "Deletion cancelled."
     exit 0
 fi
@@ -880,13 +880,17 @@ echo "Deleting duplicate files..."
 `;
             
             selectedPaths.forEach(filePath => {{
-                // Escape the file path for bash - replace single quotes with '\''
-                const escapedPath = filePath.replace(/'/g, "'\\''");
+                // Escape the file path for bash - replace single quotes and use double quotes for paths with special chars
+                const hasSpecialChars = /[()&|;<>*?[\]{{}}$`\\]/.test(filePath);
+                const escapedPath = hasSpecialChars ? 
+                    filePath.replace(/"/g, '\\"') : 
+                    filePath.replace(/'/g, "'\"'\"'");
+                const quoteChar = hasSpecialChars ? '"' : "'";
                 scriptContent += `
-if [ -f '${{escapedPath}}' ]; then
+if [ -f ${{quoteChar}}${{escapedPath}}${{quoteChar}} ]; then
     echo "Deleting: ${{filePath}}"
-    rm '${{escapedPath}}'
-    if [ $$? -eq 0 ]; then
+    rm ${{quoteChar}}${{escapedPath}}${{quoteChar}}
+    if [ $? -eq 0 ]; then
         echo "  ✓ Successfully deleted"
     else
         echo "  ✗ Failed to delete"
