@@ -202,3 +202,5 @@ test_data/resized/
 test_data/original/
 test_data/backup/
 .video_duplicate_detection/
+deleted_dup_files_*
+duplicate_report_*
