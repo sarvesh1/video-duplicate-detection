@@ -116,7 +116,7 @@ class DuplicateDetector:
     MIN_CONFIDENCE_SCORE = 0.7  # Minimum confidence score to consider as duplicate
     ASPECT_RATIO_TOLERANCE = 0.01  # 1% tolerance for aspect ratio differences
     MAX_TIMESTAMP_DIFF_DAYS = 30  # Maximum reasonable time between original and duplicate
-    EXPECTED_SIZE_RATIO_TOLERANCE = 0.3  # 30% tolerance for size ratio vs resolution ratio
+    EXPECTED_SIZE_RATIO_TOLERANCE = 0.6  # 60% tolerance for size ratio vs resolution ratio (handles recompression)
     
     def __init__(self, file_info_map: Dict[Path, FileInfo]):
         """
@@ -330,23 +330,89 @@ class DuplicateDetector:
             # Calculate overall validation score
             # For same-name, same-duration files, timestamp validation is critical
             # If timestamp validation fails due to large time differences, this should be disqualifying
+            disqualifying_timestamp = False
             if not timestamp_valid and time_diff_seconds > 86400:  # More than 1 day difference
-                # Large timestamp differences are disqualifying for files with identical names/durations
+                # Only apply relaxed timestamp logic for longer videos (>8 seconds) to exclude live photos
+                if original_meta.duration > 8.0:
+                    # Check if this looks like recompression (same resolution, different bitrate/size)
+                    is_likely_recompression = (
+                        abs(resolution_ratio - 1.0) < 0.01 and  # Same resolution
+                        original_meta.bitrate > 0 and duplicate_meta.bitrate > 0 and
+                        abs(original_meta.bitrate - duplicate_meta.bitrate) / original_meta.bitrate > 0.3  # >30% bitrate difference
+                    )
+                    
+                    # Only disqualify if timestamp difference is extreme AND it's not recompression
+                    if time_diff_seconds > 365 * 24 * 3600 and not is_likely_recompression:  # More than 1 year
+                        disqualifying_timestamp = True
+                else:
+                    # For short videos (≤8 seconds), strict timestamp validation to exclude live photos
+                    disqualifying_timestamp = True
+            
+            if disqualifying_timestamp:
                 score = 0.0
             else:
-                weights = {
-                    'aspect_ratio': 0.3,
-                    'timestamp': 0.4,  # Increased weight for timestamp validation
-                    'size': 0.15,
-                    'bitrate': 0.15
-                }
+                # Detect recompression scenarios
+                is_recompression = False
+                if abs(resolution_ratio - 1.0) < 0.01:  # Same resolution
+                    # Check for significant file size or bitrate difference (>40%)
+                    size_diff_ratio = 0
+                    bitrate_diff_ratio = 0
+                    
+                    if original_meta.file_size > 0 and duplicate_meta.file_size > 0:
+                        size_diff_ratio = abs(original_meta.file_size - duplicate_meta.file_size) / original_meta.file_size
+                    
+                    if original_meta.bitrate > 0 and duplicate_meta.bitrate > 0:
+                        bitrate_diff_ratio = abs(original_meta.bitrate - duplicate_meta.bitrate) / original_meta.bitrate
+                    
+                    # Recompression detected if significant size/bitrate difference with same resolution
+                    if size_diff_ratio > 0.4 or bitrate_diff_ratio > 0.4:
+                        is_recompression = True
+
+                # Adjust weights based on recompression detection
+                if is_recompression:
+                    # For recompressed files, reduce timestamp weight and emphasize technical matching
+                    weights = {
+                        'aspect_ratio': 0.6,   # Increased - most reliable for recompression
+                        'timestamp': 0.1,      # Reduced - unreliable for reprocessed files
+                        'duration': 0.2,       # Added - duration match is strong indicator
+                        'size': 0.05,          # Minimal - meaningless for recompression
+                        'bitrate': 0.05        # Minimal - meaningless for recompression
+                    }
+                elif abs(resolution_ratio - 1.0) < 0.01:  # Same resolution but not recompression
+                    # For same-resolution files, prioritize aspect ratio and timestamp over size/bitrate
+                    weights = {
+                        'aspect_ratio': 0.4,   # Increased from 0.3
+                        'timestamp': 0.5,      # Increased from 0.4
+                        'size': 0.05,          # Reduced from 0.15
+                        'bitrate': 0.05        # Reduced from 0.15
+                    }
+                else:
+                    # For different resolutions, use original weights
+                    weights = {
+                        'aspect_ratio': 0.3,
+                        'timestamp': 0.4,
+                        'size': 0.15,
+                        'bitrate': 0.15
+                    }
                 
-                score = (
-                    (aspect_ratio_match * weights['aspect_ratio']) +
-                    (timestamp_valid * weights['timestamp']) +
-                    (size_correlation_valid * weights['size']) +
-                    (bitrate_valid * weights['bitrate'])
-                )
+                # Calculate duration match for recompression cases
+                duration_match = True  # Always true since we already filtered by duration tolerance
+                
+                if is_recompression:
+                    score = (
+                        (aspect_ratio_match * weights['aspect_ratio']) +
+                        (timestamp_valid * weights['timestamp']) +
+                        (duration_match * weights['duration']) +
+                        (size_correlation_valid * weights['size']) +
+                        (bitrate_valid * weights['bitrate'])
+                    )
+                else:
+                    score = (
+                        (aspect_ratio_match * weights['aspect_ratio']) +
+                        (timestamp_valid * weights['timestamp']) +
+                        (size_correlation_valid * weights['size']) +
+                        (bitrate_valid * weights['bitrate'])
+                    )
             
             # Generate reason string
             reasons = []

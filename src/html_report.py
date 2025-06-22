@@ -881,10 +881,10 @@ echo "Deleting duplicate files..."
             
             selectedPaths.forEach(filePath => {{
                 // Escape the file path for bash - replace single quotes and use double quotes for paths with special chars
-                const hasSpecialChars = /[()&|;<>*?[\]{{}}$`\\]/.test(filePath);
+                const hasSpecialChars = /[()&|;<>*?\[\]{{}}$`]/.test(filePath);
                 const escapedPath = hasSpecialChars ? 
                     filePath.replace(/"/g, '\\"') : 
-                    filePath.replace(/'/g, "'\"'\"'");
+                    filePath.replace(/'/g, "'\\"'\\"'");
                 const quoteChar = hasSpecialChars ? '"' : "'";
                 scriptContent += `
 if [ -f ${{quoteChar}}${{escapedPath}}${{quoteChar}} ]; then
